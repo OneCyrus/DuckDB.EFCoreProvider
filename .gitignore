@@ -374,3 +374,6 @@ tiered_sample_archive/
 
 # Local tiered-storage delivery follow-ups
 /docs/TIERED-STORAGE-FOLLOW-UPS.md
+
+# GraphQLParquet sample runtime output (generated parquet files)
+data/

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- GraphQL + DuckDB sample: it references the provider by project path.
+          In your own app, reference the NuGet package instead:
+            dotnet add package DuckDB.EFCoreProvider -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- ASP.NET Core host: the SDK samples are plain console apps, so pull the
+       web framework in explicitly rather than switching to Microsoft.NET.Sdk.Web. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DuckDB.EFCoreProvider\DuckDB.EFCoreProvider.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HotChocolate.AspNetCore" />
+    <PackageReference Include="HotChocolate.Data.EntityFramework" />
+  </ItemGroup>
+
+</Project>

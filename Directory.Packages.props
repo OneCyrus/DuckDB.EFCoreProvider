@@ -21,7 +21,9 @@
   <ItemGroup>
     <!-- Sample-only dependencies -->
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
-  </ItemGroup>
+        <PackageVersion Include="HotChocolate.AspNetCore" Version="16.5.0" />
+        <PackageVersion Include="HotChocolate.Data.EntityFramework" Version="16.5.0" />
+      </ItemGroup>
 
   <ItemGroup>
     <!-- Test-only dependencies -->
