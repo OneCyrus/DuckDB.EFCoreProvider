@@ -60,8 +60,7 @@ builder.Services
     .AddQueryType<Query>()
     .AddFiltering()
     .AddSorting()
-    .AddProjections()
-    .ModifyRequestOptions(opt => opt.IncludeExceptionDetails = true);
+    .AddProjections();
 
 var app = builder.Build();
 app.MapGraphQL();
@@ -145,9 +144,11 @@ static string Escape(string path) => path.Replace("\\", "\\\\").Replace("'", "''
 
 // --- EF Core model -------------------------------------------------------
 // Two entities map directly to parquet files via [FromParquet]. The struct columns
-// are mapped as complex properties. Each sub-property uses HasStructField to declare
-// which STRUCT column it belongs to. The provider's VisitColumn override reads that
-// annotation and generates DuckDB struct field access syntax (t."Location".city) in SQL.
+// are mapped as complex properties. A model convention (DuckDBStructFieldConvention)
+// auto-infers the struct column name (from the complex property name) and the field
+// names (camelCase of the property names), so no manual HasColumnName/HasStructField
+// is needed. The provider's VisitColumn override reads that annotation and generates
+// DuckDB struct field access syntax (t."Location".city) in SQL.
 
 [FromParquet("data/customers.parquet")]
 public sealed class Customer
@@ -210,34 +211,17 @@ public sealed class DemoDbContext(DbContextOptions<DemoDbContext> options) : DbC
                 .WithOne(o => o.Customer)
                 .HasForeignKey(o => o.CustomerId);
 
-            // Location struct: map sub-fields as a complex property. HasStructField
-                        // stores metadata telling the provider's VisitColumn that the property
-                        // lives inside the "Location" STRUCT column. The column name (HasColumnName)
-                        // is the leaf struct field name. VisitColumn renders t."Location".city.
+            // Location struct: the convention auto-infers HasStructField("Location") on all
+            // scalar sub-properties and HasColumnName("city"/"country"/"lat") from the
+            // camelCase property names. No manual configuration needed here.
             modelBuilder.Entity<Customer>()
-                .ComplexProperty(c => c.Location, loc =>
-                {
-                                loc.Property(l => l.City).HasColumnName("city").HasStructField("Location");
-                                loc.Property(l => l.Country).HasColumnName("country").HasStructField("Location");
-                                loc.Property(l => l.Lat).HasColumnName("lat").HasStructField("Location");
-                });
+                .ComplexProperty(c => c.Location);
 
-                        // Shipping struct with nested Address struct. HasStructField takes the
-                        // struct column name plus any intermediate field names as the nested path.
-                        // For t."Shipping".address.street, the leaf "street" comes from HasColumnName
-                        // and the intermediate "address" is passed to HasStructField.
-                        modelBuilder.Entity<Order>()
-                            .ComplexProperty(o => o.Shipping, ship =>
-                            {
-                                ship.Property(s => s.Method).HasColumnName("method").HasStructField("Shipping");
-                                ship.Property(s => s.Cost).HasColumnName("cost").HasStructField("Shipping");
-                                ship.ComplexProperty(s => s.Address, addr =>
-                                {
-                                    addr.Property(a => a.Street).HasColumnName("street").HasStructField("Shipping", "address");
-                                    addr.Property(a => a.City).HasColumnName("city").HasStructField("Shipping", "address");
-                                    addr.Property(a => a.Zip).HasColumnName("zip").HasStructField("Shipping", "address");
-                                });
-                            });
+            // Shipping struct with nested Address struct. The convention infers:
+            //   method/cost → HasStructField("Shipping")
+            //   street/city/zip → HasStructField("Shipping", "address")
+            modelBuilder.Entity<Order>()
+                .ComplexProperty(o => o.Shipping);
         }
     }
 
@@ -245,7 +229,8 @@ public sealed class DemoDbContext(DbContextOptions<DemoDbContext> options) : DbC
     // The queryables are returned as fields. Hot Chocolate applies GraphQL filters,
     // sorts and projections to the underlying IQueryable, which the DuckDB provider
     // translates to SQL over read_parquet(...). Struct sub-fields are individually
-        // projected thanks to the HasStructField metadata + provider VisitColumn override.
+    // projected thanks to the auto-inferred struct field annotations + provider
+    // VisitColumn override.
 
     public sealed class Query
     {
