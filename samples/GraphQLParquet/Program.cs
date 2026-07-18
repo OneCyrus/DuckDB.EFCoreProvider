@@ -19,13 +19,15 @@ using Path = System.IO.Path;
 //
 // The demo builds two Parquet files that contain native DuckDB STRUCT columns,
 // then maps them directly via [FromParquet]. STRUCT sub-fields are mapped as EF
-// Core complex properties. Each sub-property uses HasStructField to declare
-// which STRUCT column it belongs to (and the nested field path for nested
-// structs). The provider's VisitColumn override reads that annotation and
-// generates DuckDB struct field access syntax (t."Location".city), so individual
-// struct sub-fields are projected, filtered, and sorted at the SQL level — not
-// in memory. Navigation properties cross the two parquet sets, so a single
-// GraphQL query can expand a customer and its orders.
+// Core complex properties marked with [UseStructMapping]. A model convention
+// (DuckDBStructFieldConvention) auto-infers the struct column name and field
+// paths from the complex property hierarchy, so no manual HasColumnName or
+// HasStructField calls are needed. The provider's VisitColumn override reads
+// that annotation and generates DuckDB struct field access syntax
+// (t."Location".city), so individual struct sub-fields are projected, filtered,
+// and sorted at the SQL level — not in memory. Navigation properties cross the
+// two parquet sets, so a single GraphQL query can expand a customer and its
+// orders.
 
 const string dbPath = "graphql_demo.duckdb";
 var dataDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "data"));
@@ -158,6 +160,7 @@ public sealed class Customer
     public string Tier { get; set; } = "bronze";
 
     /// <summary>Mapped as a complex property to the <c>Location STRUCT(city VARCHAR, country VARCHAR, lat DOUBLE)</c> column.</summary>
+    [UseStructMapping]
     public required Location Location { get; set; }
 
     public List<Order> Orders { get; set; } = [];
@@ -172,6 +175,7 @@ public sealed class Order
     public DateTime OrderedAt { get; set; }
 
     /// <summary>Mapped as a complex property to the <c>Shipping STRUCT(method VARCHAR, cost DECIMAL, address STRUCT(...))</c> column.</summary>
+    [UseStructMapping]
     public required Shipping Shipping { get; set; }
 
     public Customer? Customer { get; set; }
@@ -214,6 +218,11 @@ public sealed class DemoDbContext(DbContextOptions<DemoDbContext> options) : DbC
             // Location struct: the convention auto-infers HasStructField("Location") on all
             // scalar sub-properties and HasColumnName("city"/"country"/"lat") from the
             // camelCase property names. No manual configuration needed here.
+            //
+            // Fluent alternative (instead of [UseStructMapping] on the property):
+            //   modelBuilder.Entity<Customer>()
+            //       .ComplexProperty(c => c.Location)
+            //       .UseStructMapping();
             modelBuilder.Entity<Customer>()
                 .ComplexProperty(c => c.Location);
 
