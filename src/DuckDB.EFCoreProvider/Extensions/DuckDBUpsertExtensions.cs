@@ -1,3 +1,4 @@
+using DuckDB.EFCoreProvider.Diagnostics.Internal;
 using DuckDB.EFCoreProvider.Infrastructure.Internal;
 using DuckDB.NET.Data;
 using Microsoft.EntityFrameworkCore;
@@ -26,7 +27,8 @@ namespace DuckDB.EFCoreProvider.Extensions;
 ///         Like <see cref="DuckDBBulkExtensions.BulkInsert{TEntity}" />, this is a raw fast path:
 ///     </para>
 ///     <list type="bullet">
-///         <item><description>no change tracking, concurrency checks, interceptors, or events;</description></item>
+///         <item><description>no change tracking, concurrency checks, or EF command interceptors; provider lifecycle
+///             diagnostics are emitted for the complete upsert operation;</description></item>
 ///         <item><description>the conflict target is the entity's primary key, whose values must be supplied
 ///             (store-generated keys are not supported — conflict detection needs the key);</description></item>
 ///         <item><description>all mapped non-key columns are overwritten from the supplied values;</description></item>
@@ -55,44 +57,59 @@ public static class DuckDBUpsertExtensions
         ArgumentNullException.ThrowIfNull(entities);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
 
-        var plan = GetPlan(context, typeof(TEntity));
-        var connection = (DuckDBConnection)context.Database.GetDbConnection();
-        var openedHere = connection.State != ConnectionState.Open;
-
-        if (openedHere)
-        {
-            context.Database.OpenConnection();
-        }
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.Upsert,
+            nameof(Upsert),
+            typeof(TEntity).Name);
 
         try
         {
-            var count = 0;
-            var batch = new List<TEntity>(batchSize);
-            foreach (var entity in entities)
+            var plan = GetPlan(context, typeof(TEntity));
+            var connection = (DuckDBConnection)context.Database.GetDbConnection();
+            var openedHere = connection.State != ConnectionState.Open;
+
+            if (openedHere)
             {
-                batch.Add(entity);
-                if (batch.Count == batchSize)
+                context.Database.OpenConnection();
+            }
+
+            var count = 0;
+            try
+            {
+                var batch = new List<TEntity>(batchSize);
+                foreach (var entity in entities)
+                {
+                    batch.Add(entity);
+                    if (batch.Count == batchSize)
+                    {
+                        UpsertBatch(connection, plan, batch);
+                        count += batch.Count;
+                        batch.Clear();
+                    }
+                }
+
+                if (batch.Count > 0)
                 {
                     UpsertBatch(connection, plan, batch);
                     count += batch.Count;
-                    batch.Clear();
+                }
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    context.Database.CloseConnection();
                 }
             }
 
-            if (batch.Count > 0)
-            {
-                UpsertBatch(connection, plan, batch);
-                count += batch.Count;
-            }
-
+            operation.Complete(count);
             return count;
         }
-        finally
+        catch (Exception exception)
         {
-            if (openedHere)
-            {
-                context.Database.CloseConnection();
-            }
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -112,46 +129,61 @@ public static class DuckDBUpsertExtensions
         ArgumentNullException.ThrowIfNull(entities);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
 
-        var plan = GetPlan(context, typeof(TEntity));
-        var connection = (DuckDBConnection)context.Database.GetDbConnection();
-        var openedHere = connection.State != ConnectionState.Open;
-
-        if (openedHere)
-        {
-            await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.Upsert,
+            nameof(Upsert),
+            typeof(TEntity).Name);
 
         try
         {
-            var count = 0;
-            var batch = new List<TEntity>(batchSize);
-            foreach (var entity in entities)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+            var plan = GetPlan(context, typeof(TEntity));
+            var connection = (DuckDBConnection)context.Database.GetDbConnection();
+            var openedHere = connection.State != ConnectionState.Open;
 
-                batch.Add(entity);
-                if (batch.Count == batchSize)
+            if (openedHere)
+            {
+                await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var count = 0;
+            try
+            {
+                var batch = new List<TEntity>(batchSize);
+                foreach (var entity in entities)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    batch.Add(entity);
+                    if (batch.Count == batchSize)
+                    {
+                        await UpsertBatchAsync(connection, plan, batch, cancellationToken).ConfigureAwait(false);
+                        count += batch.Count;
+                        batch.Clear();
+                    }
+                }
+
+                if (batch.Count > 0)
                 {
                     await UpsertBatchAsync(connection, plan, batch, cancellationToken).ConfigureAwait(false);
                     count += batch.Count;
-                    batch.Clear();
+                }
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    await context.Database.CloseConnectionAsync().ConfigureAwait(false);
                 }
             }
 
-            if (batch.Count > 0)
-            {
-                await UpsertBatchAsync(connection, plan, batch, cancellationToken).ConfigureAwait(false);
-                count += batch.Count;
-            }
-
+            operation.Complete(count);
             return count;
         }
-        finally
+        catch (Exception exception)
         {
-            if (openedHere)
-            {
-                await context.Database.CloseConnectionAsync().ConfigureAwait(false);
-            }
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -289,7 +321,15 @@ public static class DuckDBUpsertExtensions
         var helper = context.GetService<ISqlGenerationHelper>();
         var storeObject = StoreObjectIdentifier.Table(table, schema);
 
-        var primaryKey = entityType.FindPrimaryKey()
+                if (StructMappingHelper.HasStructMappedComplexProperties(entityType))
+                {
+                    throw new NotSupportedException(
+                        $"Upsert does not support entity '{entityType.ClrType.Name}' because it contains struct-mapped complex properties. "
+                        + "STRUCT columns are consolidated at the physical layer and cannot be staged via the DuckDB Appender API. "
+                        + "Use SaveChanges instead.");
+                }
+
+                var primaryKey = entityType.FindPrimaryKey()
             ?? throw new InvalidOperationException(
                 $"'{entityType.ClrType.Name}' has no primary key; upsert requires a primary key as the conflict target.");
 

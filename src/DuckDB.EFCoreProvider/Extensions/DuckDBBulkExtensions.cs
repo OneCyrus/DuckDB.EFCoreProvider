@@ -1,3 +1,4 @@
+using DuckDB.EFCoreProvider.Diagnostics.Internal;
 using DuckDB.NET.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -20,7 +21,8 @@ namespace DuckDB.EFCoreProvider.Extensions;
 ///         raw fast path:
 ///     </para>
 ///     <list type="bullet">
-///         <item><description>no change tracking, concurrency checks, interceptors, or events;</description></item>
+///         <item><description>no change tracking, concurrency checks, or EF command interceptors; provider lifecycle
+///             diagnostics are emitted for the complete bulk operation;</description></item>
 ///         <item><description>no store-generated values — every mapped column must be given a value;</description></item>
 ///         <item><description>the target table must already exist;</description></item>
 ///         <item><description>EF column mappings and value converters are applied; shadow properties,
@@ -45,26 +47,44 @@ public static class DuckDBBulkExtensions
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(entities);
 
-        var (entityType, table, schema) = ResolveTarget(context, typeof(TEntity));
-        var connection = (DuckDBConnection)context.Database.GetDbConnection();
-        var openedHere = connection.State != ConnectionState.Open;
-
-        if (openedHere)
-        {
-            context.Database.OpenConnection();
-        }
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.BulkInsert,
+            nameof(BulkInsert),
+            typeof(TEntity).Name);
 
         try
         {
-            var accessors = GetOrderedAccessors(connection, entityType, table, schema);
-            return Append(connection, table, schema, accessors, entities);
-        }
-        finally
-        {
+            var (entityType, table, schema) = ResolveTarget(context, typeof(TEntity));
+            var connection = (DuckDBConnection)context.Database.GetDbConnection();
+            var openedHere = connection.State != ConnectionState.Open;
+
             if (openedHere)
             {
-                context.Database.CloseConnection();
+                context.Database.OpenConnection();
             }
+
+            int count;
+            try
+            {
+                var accessors = GetOrderedAccessors(connection, entityType, table, schema);
+                count = Append(connection, table, schema, accessors, entities);
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    context.Database.CloseConnection();
+                }
+            }
+
+            operation.Complete(count);
+            return count;
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -81,26 +101,44 @@ public static class DuckDBBulkExtensions
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(entities);
 
-        var (entityType, table, schema) = ResolveTarget(context, typeof(TEntity));
-        var connection = (DuckDBConnection)context.Database.GetDbConnection();
-        var openedHere = connection.State != ConnectionState.Open;
-
-        if (openedHere)
-        {
-            await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.BulkInsert,
+            nameof(BulkInsert),
+            typeof(TEntity).Name);
 
         try
         {
-            var accessors = GetOrderedAccessors(connection, entityType, table, schema);
-            return Append(connection, table, schema, accessors, entities);
-        }
-        finally
-        {
+            var (entityType, table, schema) = ResolveTarget(context, typeof(TEntity));
+            var connection = (DuckDBConnection)context.Database.GetDbConnection();
+            var openedHere = connection.State != ConnectionState.Open;
+
             if (openedHere)
             {
-                await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+                await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             }
+
+            int count;
+            try
+            {
+                var accessors = GetOrderedAccessors(connection, entityType, table, schema);
+                count = Append(connection, table, schema, accessors, entities);
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+                }
+            }
+
+            operation.Complete(count);
+            return count;
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -182,7 +220,16 @@ public static class DuckDBBulkExtensions
     {
         var clrType = entityType.ClrType;
         var storeObject = StoreObjectIdentifier.Table(table, entityType.GetSchema());
-        var columns = new Dictionary<string, Action<IDuckDBAppenderRow, object>>(StringComparer.OrdinalIgnoreCase);
+
+            if (StructMappingHelper.HasStructMappedComplexProperties(entityType))
+            {
+                throw new NotSupportedException(
+                    $"Bulk insert does not support entity '{clrType.Name}' because it contains struct-mapped complex properties. "
+                    + "STRUCT columns are consolidated at the physical layer and cannot be appended via the DuckDB Appender API. "
+                    + "Use SaveChanges instead.");
+            }
+
+            var columns = new Dictionary<string, Action<IDuckDBAppenderRow, object>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var property in entityType.GetProperties())
         {

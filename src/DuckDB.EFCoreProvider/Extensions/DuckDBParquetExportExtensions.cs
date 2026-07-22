@@ -1,3 +1,6 @@
+using DuckDB.EFCoreProvider.Diagnostics.Internal;
+using DuckDB.EFCoreProvider.Extensions;
+using DuckDB.EFCoreProvider.Storage.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -82,27 +85,44 @@ public static class DuckDBParquetExportExtensions
         ArgumentNullException.ThrowIfNull(query);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
-        var options = CreateOptions(configure);
-        using var command = query.CreateDbCommand();
-        EnsureSameConnection(database, command.Connection);
-        command.CommandText = BuildCopySql(database, command.CommandText, path, options);
-
-        var openedHere = command.Connection!.State != ConnectionState.Open;
-        if (openedHere)
-        {
-            database.OpenConnection();
-        }
+        var context = database.GetService<ICurrentDbContext>().Context;
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.ParquetExport,
+            "ParquetExport",
+            DuckDBTierArchiveManifest.RedactCredentials(path));
 
         try
         {
-            command.ExecuteNonQuery();
-        }
-        finally
-        {
+            var options = CreateOptions(configure);
+            using var command = query.CreateDbCommand();
+            EnsureSameConnection(database, command.Connection);
+            command.CommandText = BuildCopySql(database, command.CommandText, path, options);
+
+            var openedHere = command.Connection!.State != ConnectionState.Open;
             if (openedHere)
             {
-                database.CloseConnection();
+                database.OpenConnection();
             }
+
+            try
+            {
+                command.ExecuteNonQuery();
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    database.CloseConnection();
+                }
+            }
+
+            operation.Complete();
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -118,27 +138,44 @@ public static class DuckDBParquetExportExtensions
         ArgumentNullException.ThrowIfNull(query);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
-        var options = CreateOptions(configure);
-        await using var command = query.CreateDbCommand();
-        EnsureSameConnection(database, command.Connection);
-        command.CommandText = BuildCopySql(database, command.CommandText, path, options);
-
-        var openedHere = command.Connection!.State != ConnectionState.Open;
-        if (openedHere)
-        {
-            await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var context = database.GetService<ICurrentDbContext>().Context;
+        var operation = DuckDBOperationDiagnostics.StartCommand(
+            context,
+            DuckDBProviderOperation.ParquetExport,
+            "ParquetExport",
+            DuckDBTierArchiveManifest.RedactCredentials(path));
 
         try
         {
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
+            var options = CreateOptions(configure);
+            await using var command = query.CreateDbCommand();
+            EnsureSameConnection(database, command.Connection);
+            command.CommandText = BuildCopySql(database, command.CommandText, path, options);
+
+            var openedHere = command.Connection!.State != ConnectionState.Open;
             if (openedHere)
             {
-                await database.CloseConnectionAsync().ConfigureAwait(false);
+                await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             }
+
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    await database.CloseConnectionAsync().ConfigureAwait(false);
+                }
+            }
+
+            operation.Complete();
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            throw;
         }
     }
 
@@ -155,12 +192,27 @@ public static class DuckDBParquetExportExtensions
         string path,
         DuckDBParquetExportOptions<T> options)
     {
+        // Validate that partition members are not struct-mapped complex properties
+        var context = database.GetService<ICurrentDbContext>().Context;
+        foreach (var partitionMember in options.PartitionMembers)
+        {
+            var entityType = context.Model.FindEntityType(partitionMember.DeclaringType!);
+            
+            // Check if the partition member is a complex property
+            var complexProperty = entityType?.FindComplexProperty(partitionMember);
+            if (complexProperty?.GetStructMapping() is not null)
+            {
+                throw new NotSupportedException(
+                    $"Parquet export does not support partitioning by struct-mapped complex property '{complexProperty.Name}'. "
+                    + "DuckDB STRUCT columns cannot be partitioned. Use a scalar property or remove the partition.");
+            }
+        }
+
         var sql = querySql.Trim().TrimEnd(';');
         var clauses = new List<string> { "FORMAT PARQUET" };
         if (options.PartitionMembers.Count > 0)
         {
             var helper = database.GetService<ISqlGenerationHelper>();
-            var context = database.GetService<ICurrentDbContext>().Context;
             var columns = options.PartitionMembers.Select(member => ResolveColumnName(context.Model, member));
             clauses.Add($"PARTITION_BY ({string.Join(", ", columns.Select(helper.DelimitIdentifier))})");
         }
