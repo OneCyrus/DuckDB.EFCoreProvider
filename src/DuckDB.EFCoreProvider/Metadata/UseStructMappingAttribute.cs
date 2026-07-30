@@ -23,4 +23,11 @@ namespace DuckDB.EFCoreProvider.Metadata;
 ///     </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Property)]
-public sealed class UseStructMappingAttribute : Attribute;
+public sealed class UseStructMappingAttribute : Attribute
+{
+	/// <summary>
+	///     When enabled, projections of individual STRUCT fields do not require nullability
+	///     checks for unrelated sibling fields.
+	/// </summary>
+	public bool RelaxedNullabilityChecks { get; set; }
+}

@@ -109,17 +109,24 @@ internal sealed class DuckDBStructFieldRewritingExpressionVisitor : ExpressionVi
             fieldPath = [.. field.NestedFieldNames, columnExpression.Name];
         }
 
+        var relaxedNullabilityChecks = _directTables.TryGetValue(columnExpression.TableAlias, out var tableMetadata)
+            && tableMetadata.Roots.Any(root => string.Equals(
+                root.StructColumnName,
+                field.StructColumnName,
+                StringComparison.OrdinalIgnoreCase)
+                && root.RelaxedNullabilityChecks);
         var source = new ColumnExpression(
             field.StructColumnName,
             columnExpression.TableAlias,
             typeof(object),
             typeMapping: null,
-            nullable: columnExpression.IsNullable);
+            nullable: relaxedNullabilityChecks ? field.IsNullable == true : columnExpression.IsNullable);
         return new DuckDBStructFieldExpression(
             source,
             fieldPath,
             columnExpression.Type,
-            columnExpression.TypeMapping);
+            columnExpression.TypeMapping,
+            relaxedNullabilityChecks);
     }
 
     private static (

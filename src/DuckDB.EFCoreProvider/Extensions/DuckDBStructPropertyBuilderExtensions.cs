@@ -12,10 +12,14 @@ public static class DuckDBStructPropertyBuilderExtensions
 
     public static ComplexPropertyBuilder UseStructMapping(
         this ComplexPropertyBuilder propertyBuilder,
-        string? structColumnName)
+        string? structColumnName,
+        bool relaxedNullabilityChecks = false)
     {
         ArgumentNullException.ThrowIfNull(propertyBuilder);
         propertyBuilder.Metadata.SetAnnotation(DuckDBAnnotationNames.UseStructMapping, true);
+        propertyBuilder.Metadata.SetAnnotation(
+            DuckDBAnnotationNames.StructRelaxedNullabilityChecks,
+            relaxedNullabilityChecks);
         if (structColumnName is not null)
         {
             propertyBuilder.Metadata.SetAnnotation(
@@ -33,11 +37,15 @@ public static class DuckDBStructPropertyBuilderExtensions
 
     public static ComplexPropertyBuilder<TComplex> UseStructMapping<TComplex>(
         this ComplexPropertyBuilder<TComplex> propertyBuilder,
-        string? structColumnName)
+        string? structColumnName,
+        bool relaxedNullabilityChecks = false)
         where TComplex : class
     {
         ArgumentNullException.ThrowIfNull(propertyBuilder);
         propertyBuilder.Metadata.SetAnnotation(DuckDBAnnotationNames.UseStructMapping, true);
+        propertyBuilder.Metadata.SetAnnotation(
+            DuckDBAnnotationNames.StructRelaxedNullabilityChecks,
+            relaxedNullabilityChecks);
         if (structColumnName is not null)
         {
             propertyBuilder.Metadata.SetAnnotation(

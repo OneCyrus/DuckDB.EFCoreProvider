@@ -147,11 +147,12 @@ internal static class DuckDBStructSchemaPlanner
                 field.IsNullable);
         }
 
-        // Optional STRUCT roots are rejected during model validation, so physical roots are required.
+        // A STRUCT root is nullable when its mapped leaves are nullable. Optional complex
+        // roots are represented through the complex-property metadata during querying.
         return new DuckDBStructColumnPlan(
             fieldArray.Min(field => field.Ordinal),
             structColumnName,
-            isNullable: false,
+            isNullable: fieldArray.Any(field => field.IsNullable),
             root.Freeze());
     }
 

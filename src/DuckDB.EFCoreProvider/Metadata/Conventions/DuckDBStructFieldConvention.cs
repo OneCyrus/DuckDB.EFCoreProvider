@@ -31,13 +31,22 @@ public sealed class DuckDBStructFieldConvention : IModelFinalizingConvention
                 var physicalRootName =
                     complexProperty.FindAnnotation(DuckDBAnnotationNames.StructColumnName)?.Value as string
                     ?? complexProperty.Name;
+                var attribute = complexProperty.PropertyInfo?
+                    .GetCustomAttributes(typeof(UseStructMappingAttribute), inherit: true)
+                    .OfType<UseStructMappingAttribute>()
+                    .SingleOrDefault();
+                var relaxedNullabilityChecks =
+                    complexProperty.FindAnnotation(DuckDBAnnotationNames.StructRelaxedNullabilityChecks)?.Value
+                        is true
+                    || attribute?.RelaxedNullabilityChecks == true;
                 var rootFields = new List<DuckDBStructFieldInfo>();
                 var mapping = BuildMapping(
                     complexProperty,
                     physicalRootName,
                     complexProperty.Name,
                     [],
-                    rootFields);
+                    rootFields,
+                    relaxedNullabilityChecks);
 
                 complexProperty.SetStructMapping(mapping, fromDataAnnotation: false);
                 roots.Add(mapping);
@@ -145,7 +154,8 @@ public sealed class DuckDBStructFieldConvention : IModelFinalizingConvention
         string structColumnName,
         string rootPropertyName,
         IReadOnlyList<string> nestedPath,
-        List<DuckDBStructFieldInfo> rootFields)
+        List<DuckDBStructFieldInfo> rootFields,
+        bool relaxedNullabilityChecks)
     {
         var children = new Dictionary<string, DuckDBStructChildMapping>(StringComparer.Ordinal);
         var complexType = complexProperty.ComplexType;
@@ -173,13 +183,20 @@ public sealed class DuckDBStructFieldConvention : IModelFinalizingConvention
                 structColumnName,
                 rootPropertyName,
                 extendedPath,
-                nestedFields);
+                nestedFields,
+                relaxedNullabilityChecks);
             nestedComplexProperty.SetStructMapping(nestedMapping, fromDataAnnotation: false);
             rootFields.AddRange(nestedFields);
             children[nestedComplexProperty.Name] = new DuckDBStructChildMapping(nestedFieldName, nestedMapping);
         }
 
-        return new DuckDBStructMapping(structColumnName, nestedPath.LastOrDefault(), children, rootFields);
+        return new DuckDBStructMapping(
+            structColumnName,
+            nestedPath.LastOrDefault(),
+            children,
+            rootFields,
+            relaxedNullabilityChecks,
+            complexProperty.IsNullable == true);
     }
 
     private static DuckDBStructFieldInfo BuildFieldInfo(

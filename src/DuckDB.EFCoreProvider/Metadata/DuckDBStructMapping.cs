@@ -10,8 +10,10 @@ public sealed class DuckDBStructMapping
     public DuckDBStructMapping(
         string structColumnName,
         string? fieldName,
-        IReadOnlyDictionary<string, DuckDBStructChildMapping> children)
-        : this(structColumnName, fieldName, children, [])
+        IReadOnlyDictionary<string, DuckDBStructChildMapping> children,
+        bool relaxedNullabilityChecks = false,
+        bool isNullable = false)
+        : this(structColumnName, fieldName, children, [], relaxedNullabilityChecks, isNullable)
     {
     }
 
@@ -19,7 +21,9 @@ public sealed class DuckDBStructMapping
         string structColumnName,
         string? fieldName,
         IReadOnlyDictionary<string, DuckDBStructChildMapping> children,
-        IEnumerable<DuckDBStructFieldInfo> fields)
+        IEnumerable<DuckDBStructFieldInfo> fields,
+        bool relaxedNullabilityChecks = false,
+        bool isNullable = false)
     {
         if (string.IsNullOrWhiteSpace(structColumnName))
         {
@@ -31,6 +35,8 @@ public sealed class DuckDBStructMapping
 
         StructColumnName = structColumnName;
         FieldName = fieldName;
+        RelaxedNullabilityChecks = relaxedNullabilityChecks;
+        IsNullable = isNullable;
         Children = children
             .Select(pair => new KeyValuePair<string, DuckDBStructChildMapping>(
                 ValidateName(pair.Key, nameof(children)),
@@ -42,6 +48,10 @@ public sealed class DuckDBStructMapping
     public string StructColumnName { get; }
 
     public string? FieldName { get; }
+
+    public bool RelaxedNullabilityChecks { get; }
+
+    public bool IsNullable { get; }
 
     public IReadOnlyDictionary<string, DuckDBStructChildMapping> Children { get; }
 

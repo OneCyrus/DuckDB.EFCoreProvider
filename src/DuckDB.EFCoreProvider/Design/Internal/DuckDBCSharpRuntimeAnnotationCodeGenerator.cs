@@ -118,7 +118,9 @@ public class DuckDBCSharpRuntimeAnnotationCodeGenerator : RelationalCSharpRuntim
 
         return $"new {code.Reference(typeof(DuckDBStructMapping))}("
             + $"{code.Literal(mapping.StructColumnName)}, {code.Literal(mapping.FieldName)}, "
-            + $"new Dictionary<string, {code.Reference(typeof(DuckDBStructChildMapping))}> {{ {children} }})";
+            + $"new Dictionary<string, {code.Reference(typeof(DuckDBStructChildMapping))}> {{ {children} }}, "
+            + $"{code.Literal(mapping.RelaxedNullabilityChecks)}, "
+            + $"{code.Literal(mapping.IsNullable)})";
     }
 
     private string GenerateColumnMapLiteral(

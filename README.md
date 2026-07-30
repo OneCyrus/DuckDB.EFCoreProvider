@@ -322,6 +322,25 @@ e.ComplexProperty(c => c.Location).UseStructMapping("CustomerLocation")
     .Property(l => l.City).HasStructFieldName("city_name");
 ```
 
+For projections of a single field from a large STRUCT, relaxed nullability checks can be
+enabled on that mapping. This prevents unrelated sibling fields from participating in the
+structural null check for the selected field:
+
+```csharp
+e.ComplexProperty(c => c.Location)
+    .UseStructMapping("CustomerLocation", relaxedNullabilityChecks: true);
+```
+
+The equivalent attribute configuration is:
+
+```csharp
+[UseStructMapping(RelaxedNullabilityChecks = true)]
+public required Address Location { get; set; }
+```
+
+The default is `false`, preserving strict structural nullability behavior. This setting is
+local to the configured STRUCT mapping and does not affect other complex properties.
+
 `HasColumnName` controls the EF/synthetic relational column identity used by the provider; it does not rename the physical DuckDB STRUCT leaf. Use `HasStructField("CustomerLocation", "address")` to configure an explicit root and nested path.
 
 **Limitations & Behavior:**

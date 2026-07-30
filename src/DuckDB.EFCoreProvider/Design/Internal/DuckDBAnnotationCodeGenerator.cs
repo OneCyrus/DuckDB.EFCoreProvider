@@ -27,6 +27,12 @@ internal sealed class DuckDBAnnotationCodeGenerator(AnnotationCodeGeneratorDepen
             typeof(ComplexPropertyBuilder),
             parameterCount: 2);
 
+    private static readonly MethodInfo ComplexPropertyUseStructMappingWithOptionsMethod =
+        GetMethod(
+            nameof(DuckDBStructPropertyBuilderExtensions.UseStructMapping),
+            typeof(ComplexPropertyBuilder),
+            parameterCount: 3);
+
     private static readonly MethodInfo ComplexPropertyHasStructFieldNameMethod =
         GetMethod(
             nameof(DuckDBStructPropertyBuilderExtensions.HasStructFieldName),
@@ -95,12 +101,23 @@ internal sealed class DuckDBAnnotationCodeGenerator(AnnotationCodeGeneratorDepen
         if (annotations.Remove(DuckDBAnnotationNames.UseStructMapping, out var useMapping)
             && useMapping.Value is true)
         {
+            var hasRootName = annotations.Remove(DuckDBAnnotationNames.StructColumnName, out var root)
+                && root.Value is string rootName;
+            var relaxed = annotations.Remove(
+                DuckDBAnnotationNames.StructRelaxedNullabilityChecks,
+                out var relaxedAnnotation)
+                && relaxedAnnotation.Value is true;
+
             calls.Add(
-                annotations.Remove(DuckDBAnnotationNames.StructColumnName, out var root)
-                    && root.Value is string rootName
+                relaxed
+                    ? new DuckDBMethodCallCodeFragment(
+                        ComplexPropertyUseStructMappingWithOptionsMethod,
+                        hasRootName ? root!.Value : null,
+                        true)
+                    : hasRootName
                         ? new DuckDBMethodCallCodeFragment(
                             ComplexPropertyUseStructMappingWithColumnNameMethod,
-                            rootName)
+                            root!.Value)
                         : new DuckDBMethodCallCodeFragment(ComplexPropertyUseStructMappingMethod));
         }
         else

@@ -138,4 +138,7 @@ public static class DuckDBAnnotationNames
     ///     the CLR property or the <c>ComplexProperty(...).UseStructMapping()</c> fluent API.
     /// </summary>
     public const string UseStructMapping = Prefix + "UseStructMapping";
+
+    /// <summary>Whether individual STRUCT field projections use relaxed nullability checks.</summary>
+    public const string StructRelaxedNullabilityChecks = Prefix + "StructRelaxedNullabilityChecks";
 }

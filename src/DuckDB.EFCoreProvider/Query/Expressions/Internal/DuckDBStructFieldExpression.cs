@@ -21,8 +21,9 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         SqlExpression source,
         IReadOnlyList<string> fieldPath,
         Type type,
-        RelationalTypeMapping? typeMapping = null)
-        : this(source, fieldPath.ToArray(), type, typeMapping)
+        RelationalTypeMapping? typeMapping = null,
+        bool relaxedNullabilityChecks = false)
+        : this(source, fieldPath.ToArray(), type, typeMapping, relaxedNullabilityChecks)
     {
     }
 
@@ -30,7 +31,8 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         SqlExpression source,
         string[] fieldPath,
         Type type,
-        RelationalTypeMapping? typeMapping)
+        RelationalTypeMapping? typeMapping,
+        bool relaxedNullabilityChecks)
         : base(type, typeMapping)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -40,6 +42,7 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         }
 
         Source = source;
+        RelaxedNullabilityChecks = relaxedNullabilityChecks;
         _fieldPath = fieldPath.ToImmutableArray();
     }
 
@@ -74,6 +77,9 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
     /// <summary>The immutable physical path from the source STRUCT to the leaf.</summary>
     public IReadOnlyList<string> FieldPath => _fieldPath;
 
+    /// <summary>Whether nullability analysis may ignore unrelated sibling STRUCT fields.</summary>
+    public bool RelaxedNullabilityChecks { get; }
+
     /// <summary>Compatibility view of the source table alias.</summary>
     public string TableAlias => (Source as ColumnExpression)?.TableAlias ?? string.Empty;
 
@@ -95,7 +101,12 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         return ReferenceEquals(source, Source)
                 && immutablePath.SequenceEqual(_fieldPath, StringComparer.Ordinal)
             ? this
-            : new DuckDBStructFieldExpression(source, immutablePath, Type, TypeMapping);
+            : new DuckDBStructFieldExpression(
+                source,
+                immutablePath,
+                Type,
+                TypeMapping,
+                RelaxedNullabilityChecks);
     }
 
     /// <summary>Compatibility overload for the former alias-based expression shape.</summary>
@@ -115,14 +126,16 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
                     typeof(SqlExpression),
                     typeof(string[]),
                     typeof(Type),
-                    typeof(RelationalTypeMapping)
+                    typeof(RelationalTypeMapping),
+                    typeof(bool)
                 ])!,
             Source.Quote(),
             NewArrayInit(
                 typeof(string),
                 _fieldPath.Select(field => (Expression)Constant(field)).ToArray()),
             Constant(Type),
-            RelationalExpressionQuotingUtilities.QuoteTypeMapping(TypeMapping));
+            RelationalExpressionQuotingUtilities.QuoteTypeMapping(TypeMapping),
+            Constant(RelaxedNullabilityChecks));
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -140,6 +153,7 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         => other is not null
             && base.Equals(other)
             && Source.Equals(other.Source)
+            && RelaxedNullabilityChecks == other.RelaxedNullabilityChecks
             && _fieldPath.SequenceEqual(other._fieldPath, StringComparer.Ordinal);
 
     public override bool Equals(object? obj)
@@ -150,6 +164,7 @@ public sealed class DuckDBStructFieldExpression : SqlExpression, IEquatable<Duck
         var hash = new HashCode();
         hash.Add(base.GetHashCode());
         hash.Add(Source);
+        hash.Add(RelaxedNullabilityChecks);
         foreach (var field in _fieldPath)
         {
             hash.Add(field, StringComparer.Ordinal);
